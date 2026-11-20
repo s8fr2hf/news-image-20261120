@@ -1,138 +1,248 @@
-"""Draw the 20 November 2026 front-page poster to entry.png (build time only).
+"""Draw the front-page poster for Friday 20 November 2026.
 
-Layout (1024x1024, all drawing done here with Pillow):
-  masthead band, lead story with three country discs, a 2x2 grid of
-  further stories, and a ticker strip along the bottom.
-Everything is fixed text, so the output is fully deterministic.
+A single broadsheet front page, "The World in One Picture", drawn
+entirely with Pillow: a masthead, one lead story, four more stories
+in a grid, and a small line-art globe. The drawing is a pure
+function of the constants below -- no randomness, no clock, no
+network -- so running it twice produces byte-identical PNGs.
+
+Run it directly to (re)draw the entry image beside this file:
+    python3 render.py
 """
+
+import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-W, H = 1024, 1024
-CREAM = (247, 241, 227)
-NAVY = (20, 36, 62)
-NAVY_LIGHT = (34, 58, 92)
-GOLD = (184, 138, 44)
-GOLD_LIGHT = (214, 172, 84)
-INK = (24, 24, 24)
-GREY = (92, 92, 92)
-RED = (158, 34, 34)
-WHITE = (255, 255, 255)
+WIDTH = 1024
+HEIGHT = 1024
+MARGIN = 46
+CONTENT = WIDTH - 2 * MARGIN
 
-SERIF = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
-SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-SANS_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+PAPER = (247, 242, 231)
+INK = (26, 26, 26)
+RED = (163, 22, 33)
+MUTED = (96, 91, 82)
+RULE = (150, 143, 130)
+GLOBE_FILL = (224, 232, 236)
+
+FONT_DIR = "/usr/share/fonts/truetype/dejavu"
+
+SERIF = "DejaVuSerif.ttf"
+SERIF_BOLD = "DejaVuSerif-Bold.ttf"
+SANS = "DejaVuSans.ttf"
+SANS_BOLD = "DejaVuSans-Bold.ttf"
+
+LEAD = {
+    "kicker": "WASHINGTON · THE IRAN DECISION",
+    "headline": "TRUMP PUTS IRAN DECISION OFF TO 2027",
+    "deck": "“We’ll see what happens after January 1,” the president says, "
+            "in no rush over fresh strikes.",
+}
+
+GRID = [
+    (
+        "BERLIN · THE UKRAINE WAR",
+        "EUROPE READY TO TALK TO RUSSIA",
+        "At a Berlin summit, Merz says Europe will negotiate — with "
+        "Kyiv and Europe at the table.",
+    ),
+    (
+        "ODISHA · THE STORM",
+        "CYCLONE AKVAN COMES ASHORE",
+        "Weakened but still fierce, the storm crosses the coast near "
+        "Gopalpur. Three lakh people moved to safety.",
+    ),
+    (
+        "SPACE · THE LONGEST VOYAGE",
+        "VOYAGER 1, ONE LIGHT-DAY OUT",
+        "After 49 years, the probe is 16.1 billion miles out — the "
+        "first object a full light-day from Earth.",
+    ),
+    (
+        "SEOUL · THE MARTIAL-LAW TRIAL",
+        "SEOUL COURT OVERTURNS 15-YEAR TERM",
+        "The Supreme Court overturns the 15-year term for ex-PM Han "
+        "Duck-soo; the case goes back for retrial.",
+    ),
+]
+
+FOOTER = ("Sources: Reuters · Yonhap · India Meteorological Department "
+          "· NASA · wire reports — 20 November 2026")
 
 
-def font(path, size):
-    return ImageFont.truetype(path, size)
+def load_font(filename, size):
+    """Load a DejaVu font, falling back to Pillow's built-in font."""
+    try:
+        return ImageFont.truetype(os.path.join(FONT_DIR, filename), size)
+    except OSError:
+        return ImageFont.load_default()
 
 
-def wrap(draw, text, fnt, max_w):
-    """Split text into lines that fit max_w pixels."""
-    lines, cur = [], ""
-    for word in text.split(" "):
-        trial = (cur + " " + word).strip()
-        if draw.textlength(trial, font=fnt) <= max_w:
-            cur = trial
+def wrap_text(text, font, max_width):
+    """Split text into lines that fit max_width, breaking on words."""
+    lines = []
+    current = ""
+    for word in text.split():
+        trial = word if not current else current + " " + word
+        if font.getlength(trial) <= max_width:
+            current = trial
         else:
-            if cur:
-                lines.append(cur)
-            cur = word
-    if cur:
-        lines.append(cur)
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
     return lines
 
 
-def text_block(draw, x, y, text, fnt, fill, max_w, leading=None):
-    """Draw wrapped text, return the y just below the last line."""
-    if leading is None:
-        leading = int(fnt.size * 1.25)
-    for line in wrap(draw, text, fnt, max_w):
-        draw.text((x, y), line, font=fnt, fill=fill)
+def draw_block(draw, text, font, x, y, max_width, leading, fill=INK):
+    """Draw wrapped text starting at (x, y); return the y below it."""
+    for line in wrap_text(text, font, max_width):
+        draw.text((x, y), line, font=font, fill=fill)
         y += leading
     return y
 
 
-def centred(draw, cx, y, text, fnt, fill):
-    w = draw.textlength(text, font=fnt)
-    draw.text((cx - w / 2, y), text, font=fnt, fill=fill)
-    return y + int(fnt.size * 1.3)
+def tracked_width(text, font, tracking):
+    """Width of text drawn with extra space between letters."""
+    width = sum(font.getlength(ch) for ch in text)
+    return width + tracking * max(len(text) - 1, 0)
 
 
-def panel(draw, x, y, w, h, kicker, headline, body):
-    draw.rectangle([x, y, x + w, y + h], fill=WHITE, outline=NAVY, width=2)
-    draw.rectangle([x, y, x + w, y + 30], fill=NAVY)
-    draw.text((x + 12, y + 5), kicker, font=font(SANS_BOLD, 17), fill=GOLD_LIGHT)
-    text_block(draw, x + 12, y + 44, headline, font(SANS_BOLD, 24),
-               RED, w - 24, leading=30)
-    text_block(draw, x + 12, y + 108, body, font(SANS, 19),
-               INK, w - 24, leading=25)
+def draw_tracked_centered(draw, text, font, cx, y, tracking, fill=INK):
+    """Draw text centred on cx with extra space between letters."""
+    x = cx - tracked_width(text, font, tracking) / 2
+    for ch in text:
+        draw.text((x, y), ch, font=font, fill=fill)
+        x += font.getlength(ch) + tracking
+
+
+def draw_globe(draw, cx, cy, radius):
+    """A small line-art globe: meridians, parallels, an orbit ring."""
+    box = [cx - radius, cy - radius, cx + radius, cy + radius]
+    draw.ellipse(box, fill=GLOBE_FILL, outline=INK, width=3)
+    for fraction in (0.35, 0.7):
+        rx = radius * fraction
+        draw.ellipse(
+            [cx - rx, cy - radius, cx + rx, cy + radius],
+            outline=INK, width=2,
+        )
+    for dy in (-0.55, 0.0, 0.55):
+        y = cy + radius * dy
+        half = (radius ** 2 - (radius * dy) ** 2) ** 0.5
+        draw.line([(cx - half, y), (cx + half, y)], fill=INK, width=2)
+    orbit = [
+        cx - radius - 16, cy - radius * 0.42,
+        cx + radius + 16, cy + radius * 0.42,
+    ]
+    draw.ellipse(orbit, outline=RED, width=2)
+    sx, sy = cx, cy - radius * 0.42
+    star = [
+        (sx, sy - 7), (sx + 2, sy - 2), (sx + 7, sy), (sx + 2, sy + 2),
+        (sx, sy + 7), (sx - 2, sy + 2), (sx - 7, sy), (sx - 2, sy - 2),
+    ]
+    draw.polygon(star, fill=RED)
+
+
+def draw_story_cell(draw, box, kicker, headline, deck):
+    """One grid cell: red kicker, bold headline, short deck."""
+    x, y, width = box
+    kicker_font = load_font(SANS_BOLD, 17)
+    draw.text((x, y), kicker, font=kicker_font, fill=RED)
+    y += 26
+    headline_font = load_font(SERIF_BOLD, 28)
+    y = draw_block(draw, headline, headline_font, x, y, width, 34)
+    y += 4
+    deck_font = load_font(SERIF, 18)
+    draw_block(draw, deck, deck_font, x, y, width, 22)
+
+
+def build_poster():
+    """Compose the whole front page and return the image."""
+    image = Image.new("RGB", (WIDTH, HEIGHT), PAPER)
+    draw = ImageDraw.Draw(image)
+
+    draw.rectangle([26, 26, WIDTH - 27, HEIGHT - 27], outline=INK, width=3)
+    draw.rectangle([34, 34, WIDTH - 35, HEIGHT - 35], outline=RULE, width=1)
+
+    header_font = load_font(SANS_BOLD, 20)
+    draw.text((MARGIN, 52), "FRIDAY · 20 NOVEMBER 2026",
+              font=header_font, fill=INK)
+    right = "FIVE STORIES · ONE PLANET"
+    draw.text((WIDTH - MARGIN - header_font.getlength(right), 52), right,
+              font=header_font, fill=INK)
+    draw.line([(MARGIN, 84), (WIDTH - MARGIN, 84)], fill=INK, width=2)
+
+    masthead_font = load_font(SERIF_BOLD, 92)
+    title = "THE WORLD"
+    draw.text(((WIDTH - masthead_font.getlength(title)) / 2, 92), title,
+              font=masthead_font, fill=INK)
+    subtitle_font = load_font(SANS_BOLD, 32)
+    draw_tracked_centered(draw, "IN ONE PICTURE", subtitle_font,
+                          WIDTH / 2, 192, 10)
+    draw.line([(MARGIN, 234), (WIDTH - MARGIN, 234)], fill=INK, width=2)
+    draw.line([(MARGIN, 240), (WIDTH - MARGIN, 240)], fill=RULE, width=1)
+
+    y = 256
+    kicker_font = load_font(SANS_BOLD, 20)
+    draw.text((MARGIN, y), LEAD["kicker"], font=kicker_font, fill=RED)
+    y += 28
+    headline_font = load_font(SERIF_BOLD, 54)
+    y = draw_block(draw, LEAD["headline"], headline_font,
+                   MARGIN, y, CONTENT, 62)
+    y += 8
+    deck_font = load_font(SERIF, 24)
+    y = draw_block(draw, LEAD["deck"], deck_font, MARGIN, y, CONTENT, 31)
+
+    draw.line([(MARGIN, 490), (WIDTH - MARGIN, 490)], fill=RULE, width=1)
+    draw_globe(draw, WIDTH / 2, 548, 50)
+    side_font = load_font(SANS_BOLD, 18)
+    left = "ONE DAY"
+    draw.text((WIDTH / 2 - 50 - 40 - side_font.getlength(left), 539), left,
+              font=side_font, fill=MUTED)
+    draw.text((WIDTH / 2 + 50 + 40, 539), "ONE PLANET",
+              font=side_font, fill=MUTED)
+    draw.line([(MARGIN, 608), (WIDTH - MARGIN, 608)], fill=RULE, width=1)
+
+    col_width = (CONTENT - 30) // 2
+    grid_top = 622
+    row_height = 160
+    row_gap = 8
+    draw.line([(WIDTH / 2, grid_top), (WIDTH / 2, grid_top + 2 * row_height + row_gap)],
+              fill=RULE, width=1)
+    draw.line([(MARGIN, grid_top + row_height + row_gap // 2),
+               (WIDTH - MARGIN, grid_top + row_height + row_gap // 2)],
+              fill=RULE, width=1)
+    positions = [
+        (MARGIN, grid_top),
+        (WIDTH / 2 + 15, grid_top),
+        (MARGIN, grid_top + row_height + row_gap),
+        (WIDTH / 2 + 15, grid_top + row_height + row_gap),
+    ]
+    for (kicker, headline, deck), (x, top) in zip(GRID, positions):
+        draw_story_cell(draw, (x, top, col_width), kicker, headline, deck)
+
+    footer_y = 958
+    draw.line([(MARGIN, footer_y), (WIDTH - MARGIN, footer_y)],
+              fill=INK, width=1)
+    footer_font = load_font(SANS, 15)
+    draw.text(((WIDTH - footer_font.getlength(FOOTER)) / 2, 968), FOOTER,
+              font=footer_font, fill=MUTED)
+
+    return image
+
+
+def save_poster(path):
+    """Render the poster and write it to path as a PNG."""
+    build_poster().save(path, format="PNG")
 
 
 def main():
-    img = Image.new("RGB", (W, H), CREAM)
-    d = ImageDraw.Draw(img)
-
-    # --- masthead -------------------------------------------------------
-    d.rectangle([0, 0, W, 132], fill=NAVY)
-    d.rectangle([0, 132, W, 138], fill=GOLD)
-    centred(d, W // 2, 16, "THE WORLD IN ONE PICTURE",
-            font(SERIF, 52), WHITE)
-    centred(d, W // 2, 82, "FRIDAY  ·  20 NOVEMBER 2026",
-            font(SANS_BOLD, 26), GOLD_LIGHT)
-
-    # --- lead story -----------------------------------------------------
-    d.rectangle([28, 160, W - 28, 452], fill=WHITE, outline=NAVY, width=2)
-    d.text((48, 176), "WASHINGTON  ·  IRAN DECISION",
-           font=font(SANS_BOLD, 18), fill=GOLD)
-    text_block(d, 48, 206, "TRUMP PUTS IRAN CALL OFF UNTIL 2027",
-               font(SERIF, 40), NAVY, W - 96, leading=48)
-    text_block(d, 48, 306,
-               "No rush on new strikes, he tells Reuters: "
-               "'We'll see what happens after January 1.' "
-               "Netanyahu had pressed for a second bombing campaign.",
-               font(SANS, 24), INK, 620, leading=31)
-    # three country discs
-    discs = [("USA", NAVY_LIGHT), ("IRN", RED), ("ISR", (58, 96, 58))]
-    cx = 760
-    for label, colour in discs:
-        d.ellipse([cx, 300, cx + 74, 374], fill=colour, outline=GOLD, width=3)
-        tw = d.textlength(label, font=font(SANS_BOLD, 20))
-        d.text((cx + (74 - tw) / 2, 328), label,
-               font=font(SANS_BOLD, 20), fill=WHITE)
-        cx += 84
-    d.line([48, 402, 976, 402], fill=GOLD, width=2)
-    d.text((48, 412), "$48bn: cost of US operations against Iran since February, the Pentagon told Congress",
-           font=font(SANS, 19), fill=GREY)
-
-    # --- 2x2 grid --------------------------------------------------------
-    gx, gy = 28, 474
-    pw, ph, gap = 472, 196, 24
-    panel(d, gx, gy, pw, ph, "BERLIN",
-          "EUROPE READY FOR TALKS WITH RUSSIA",
-          "Coalition of the Willing leaders say they are ready to negotiate an end to the Ukraine war.")
-    panel(d, gx + pw + gap, gy, pw, ph, "ODISHA",
-          "CYCLONE AKVAN LANDFALL TODAY",
-          "300,000 evacuated as the severe storm nears Gopalpur, gusts to 110 km/h.")
-    panel(d, gx, gy + ph + gap, pw, ph, "SPACE",
-          "VOYAGER 1 ONE LIGHT-DAY AWAY",
-          "NASA confirms the probe crossed 25.9 billion km on 18 Nov; a signal now takes 24 hours each way.")
-    panel(d, gx + pw + gap, gy + ph + gap, pw, ph, "SEOUL",
-          "HAN'S 15-YEAR TERM OVERTURNED",
-          "Top court sends the ex-PM's martial-law case back for retrial; other findings stand.")
-
-    # --- ticker ----------------------------------------------------------
-    d.rectangle([0, 916, W, H], fill=NAVY)
-    d.rectangle([0, 916, W, 922], fill=GOLD)
-    ticker = ("GTA 6 passes $1.84bn, topping The Odyssey's box office  \u00b7  "
-              "Hayabusa2 retargeted after engine failure  \u00b7  "
-              "Nicholls 113* lifts NZ to 243/5 vs India  \u00b7  "
-              "Russian strikes damage Austrian and Dutch embassies in Kyiv")
-    text_block(d, 28, 936, ticker, font(SANS_BOLD, 22), WHITE,
-               W - 56, leading=30)
-
-    img.save("entry.png", "PNG", optimize=True)
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "entry.png")
+    save_poster(path)
+    print("wrote", path)
 
 
 if __name__ == "__main__":
